@@ -28,35 +28,38 @@ class VideoProcessor(VideoProcessorBase):
 
     def recv(self, frame):
         try:
-            # Convert WebRTC frame to a PIL Image
             pil_image = frame.to_image()
-            # Convert PIL Image to NumPy array
             img = np.array(pil_image)
-            # Convert from RGB (PIL default) to BGR (OpenCV default)
             img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
-            # Start with the original image as a default
-            result_img = img
+            # Create a copy for processing so we don't mess up the original visual
+            result_img = img.copy()
 
+            # Convert to grayscale for analysis
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
             if self.select_type == "Edge Detection":
-                edges = cv2.Canny(gray, 50, 150)
+                # ONLY blur for edges. Use (3,3) or (5,5) for best balance
+                blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+                edges = cv2.Canny(blurred, 50, 150)
                 result_img = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
 
             elif self.select_type == "Face Detection":
-                faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
+                # Do NOT blur here. Use the sharp 'gray' image.
+                # Changed 4 to 6 for more stable detection (less flickering)
+                faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6)
+
                 for (x, y, w, h) in faces:
-                    cv2.rectangle(result_img, (x, y), (x + w, y + h), (255, 255, 255), 2)
+                    # Draw a Green box (0, 255, 0) instead of white
+                    # Thickness 2
+                    cv2.rectangle(result_img, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-            # Convert the final BGR image (from OpenCV) back to RGB (for av)
+            # Convert back to RGB for display
             final_frame_rgb = cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB)
-
-            # Return an av.VideoFrame in 'rgb24' format
             return av.VideoFrame.from_ndarray(final_frame_rgb, format="rgb24")
 
         except Exception as e:
-            print(f"Error in video processing: {e}")
+            print(f"Error: {e}")
             return frame
 
 
@@ -68,18 +71,15 @@ st.write("This application captures video from your webcam and displays it in re
 webrtc_streamer(
     key="video-capture",
     video_processor_factory=lambda: VideoProcessor(select_type=select_type),
-    media_stream_constraints={"video": True, "audio": False},
+    # UPDATE: Request 1280x720 resolution for better quality
+    media_stream_constraints={
+        "video": {"width": 1280, "height": 720},
+        "audio": False
+    },
     async_processing=True,
-    # --- THIS IS THE FIX ---
-    # Add Google's public STUN servers to help with network traversal
     rtc_configuration={
-        "iceServers": [{"urls": [
-            "stun:stun.l.google.com:19302",
-            "stun:stun1.l.google.com:19302",
-            "stun:stun2.l.google.com:19302"
-        ]}]
+        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
     }
-    # ---------------------
 )
 
 st.write("Click 'Start' to begin. You will need to grant camera permissions in your browser.")
